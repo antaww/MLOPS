@@ -29,3 +29,14 @@ La documentation interactive Swagger est disponible sur `http://localhost:8000/d
 - `app/` : API FastAPI.
 - `src/inference/` : Modèles Whisper et Summarizer.
 - `deploy/` : Fichiers de configuration pour le déploiement.
+
+$filePath = "c:\Users\antap\PycharmProjects\MLOPS\data\raw\test_2.wav"
+>> $question = "what the link between capuccino and hitchcock and herman?"
+>>
+>> curl.exe -X POST "http://localhost:8000/ask-audio" `
+>>   -H "accept: application/json" `
+>>   -H "Content-Type: multipart/form-data" `
+>>   -F "file=@$filePath" `
+>>   -F "question=$question"
+
+
