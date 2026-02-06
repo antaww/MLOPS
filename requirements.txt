@@ -1,0 +1,18 @@
+# API
+fastapi
+uvicorn
+python-multipart
+pydantic
+uvicorn[standard]
+
+# ML - Transcription
+faster-whisper
+
+# ML - Summarization
+transformers
+torch
+sentencepiece
+
+# Utils
+python-dotenv
+httpx
