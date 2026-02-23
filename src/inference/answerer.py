@@ -12,18 +12,25 @@ class Answerer:
         if not context or not question:
             return "Pas assez de données pour répondre."
         
-        # On construit un prompt clair pour le modèle
-        input_text = f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
+        # Instruction plus précise pour forcer le raisonnement
+        input_text = (
+            f"Instruction: Based on the following context, answer the question as a helpful assistant. "
+            f"Think about who is speaking and who is being addressed.\n\n"
+            f"Context: {context}\n\n"
+            f"Question: {question}\n\n"
+            f"Answer:"
+        )
         
         # Tokenisation
         inputs = self.tokenizer(input_text, return_tensors="pt", max_length=1024, truncation=True).to(self.device)
         
-        # Génération de la réponse
+        # Génération améliorée (num_beams=5 pour plus de qualité)
         with torch.no_grad():
             outputs = self.model.generate(
                 inputs["input_ids"], 
                 max_length=150,
-                do_sample=False
+                num_beams=5,
+                early_stopping=True
             )
         
         # Décodage
