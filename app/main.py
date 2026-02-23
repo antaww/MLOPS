@@ -10,7 +10,7 @@ import time
 app = FastAPI(title="Whisper QA API")
 
 # Cache simple pour éviter de re-transcrire le même audio
-# Format: { "url_ou_filename": "transcription" }
+# Format: { "url_ou_filename": {"transcript": "...", "duration": 123.4} }
 transcription_cache = {}
 
 # Initialisation des modèles
@@ -33,6 +33,9 @@ def read_root():
         <style>
             body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
             .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+            .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+            .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
         </style>
     </head>
     <body class="min-h-screen flex items-center justify-center p-4">
@@ -44,7 +47,10 @@ def read_root():
 
             <div class="space-y-4">
                 <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">URL du fichier MP3</label>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-sm font-semibold text-slate-700">URL du fichier MP3</label>
+                        <span id="durationBadge" class="hidden px-2 py-0.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-full"></span>
+                    </div>
                     <input type="text" id="url" placeholder="https://exemple.com/audio.mp3" 
                         class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
                 </div>
@@ -79,12 +85,19 @@ def read_root():
         </div>
 
         <script>
+            function formatDuration(seconds) {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.round(seconds % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+
             async function askQuestion() {
                 const url = document.getElementById('url').value;
                 const question = document.getElementById('question').value;
                 const btn = document.getElementById('submitBtn');
                 const loader = document.getElementById('loader');
                 const resultArea = document.getElementById('resultArea');
+                const durationBadge = document.getElementById('durationBadge');
 
                 if (!url) { alert('Veuillez entrer une URL'); return; }
 
@@ -108,6 +121,13 @@ def read_root():
                     if (response.ok) {
                         document.getElementById('answer').innerText = data.answer;
                         document.getElementById('transcription').innerText = data.transcription;
+                        
+                        // Affichage de la durée
+                        if (data.audio_duration) {
+                            durationBadge.innerText = "Durée: " + formatDuration(data.audio_duration);
+                            durationBadge.classList.remove('hidden');
+                        }
+                        
                         resultArea.classList.remove('hidden');
                     } else {
                         alert('Erreur: ' + (data.detail || 'Une erreur est survenue'));
@@ -137,11 +157,14 @@ async def process_audio(
     # Identifiant unique pour le cache (URL ou nom de fichier)
     cache_key = url if url else file.filename
     transcript = None
+    duration = None
 
     # Vérification du cache
     if cache_key in transcription_cache:
         print(f"Utilisation de la transcription en cache pour : {cache_key}")
-        transcript = transcription_cache[cache_key]
+        cached_data = transcription_cache[cache_key]
+        transcript = cached_data["transcript"]
+        duration = cached_data["duration"]
 
     temp_path = None
     
@@ -165,10 +188,13 @@ async def process_audio(
             
             # 1. Transcription
             print(f"Transcription en cours...")
-            transcript = transcriber.transcribe(temp_path)
+            transcript, duration = transcriber.transcribe(temp_path)
             
             # Mise en cache
-            transcription_cache[cache_key] = transcript
+            transcription_cache[cache_key] = {
+                "transcript": transcript,
+                "duration": duration
+            }
         
         start_time = time.time()
         
@@ -183,6 +209,7 @@ async def process_audio(
             "question": question,
             "transcription": transcript,
             "answer": answer,
+            "audio_duration": duration,
             "processing_time_sec": round(processing_time, 2)
         }
     

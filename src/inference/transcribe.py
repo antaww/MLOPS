@@ -9,4 +9,4 @@ class Transcriber:
     def transcribe(self, audio_path):
         segments, info = self.model.transcribe(audio_path, beam_size=5)
         text = " ".join([segment.text for segment in segments])
-        return text.strip()
+        return text.strip(), info.duration
