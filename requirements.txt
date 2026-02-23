@@ -5,13 +5,15 @@ python-multipart
 pydantic
 uvicorn[standard]
 
-# ML - Transcription
+# ML - Transcription (Faster-Whisper)
 faster-whisper
-
-# ML - Summarization
-transformers
 torch
+accelerate
+
+# ML - Answerer (Transformers)
+transformers
 sentencepiece
+huggingface_hub
 
 # Utils
 python-dotenv

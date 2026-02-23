@@ -1,47 +1,47 @@
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
 class Answerer:
-    def __init__(self, model_name="google/flan-t5-large", device=None):
-        # Auto-détection du GPU
+    def __init__(self, model_name="Qwen/Qwen2.5-1.5B-Instruct", device=None):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         
         self.device = device
-        print(f"--- Answerer configuré sur : {device.upper()} ---")
+        print(f"--- Answerer LLM (Qwen 1.5B) configuré sur : {device.upper()} ---")
         
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
+        # On charge le modèle en auto (float16 sur GPU) pour la vitesse
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name, 
+            torch_dtype="auto", 
+            device_map=device
+        )
 
     def ask(self, context, question):
         if not context or not question:
             return "Pas assez de données pour répondre."
         
-        # STRATÉGIE : Question + Instruction en PREMIER pour éviter la troncation
-        input_text = (
-            f"Answer the following question using the context below.\n"
-            f"Question: {question}\n"
-            f"Context: {context}\n"
-            f"Answer:"
-        )
+        # On s'assure que le contexte n'est pas trop long pour le modèle (max 8k ici par sécurité)
+        context_window = context[-8000:] if len(context) > 8000 else context
+
+        # Utilisation du template de chat pour forcer le comportement d'assistant
+        messages = [
+            {"role": "system", "content": "Tu es un assistant qui analyse des transcriptions audio. Réponds de manière concise et précise en français. Si la réponse n'est pas dans le texte, dis-le."},
+            {"role": "user", "content": f"Voici une transcription :\n{context_window}\n\nQuestion : {question}"}
+        ]
         
-        # Tokenisation (on garde le début du prompt qui contient la question)
-        inputs = self.tokenizer(input_text, return_tensors="pt", max_length=1024, truncation=True).to(self.device)
-        
-        # Génération
+        text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        model_inputs = self.tokenizer([text], return_tensors="pt").to(self.device)
+
         with torch.no_grad():
-            outputs = self.model.generate(
-                inputs["input_ids"], 
-                max_length=150,
-                num_beams=5,
-                no_repeat_ngram_size=3,
-                early_stopping=True
+            generated_ids = self.model.generate(
+                model_inputs.input_ids,
+                max_new_tokens=150,
+                do_sample=False # Déterministe pour le benchmark
             )
         
-        answer = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # On décode uniquement la partie générée
+        response_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
+        answer = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)[0]
         
-        # Sécurité : si le modèle ne donne rien de probant
-        if not answer or len(answer.strip()) < 2:
-            return "Désolé, je n'ai pas trouvé la réponse dans cet audio."
-            
-        return answer
+        return answer.strip()

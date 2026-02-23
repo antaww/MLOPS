@@ -9,15 +9,11 @@ import time
 
 app = FastAPI(title="Whisper QA API")
 
-# Cache simple pour éviter de re-transcrire le même audio
-# Format: { "url_ou_filename": {"transcript": "...", "duration": 123.4, "language": "fr"} }
 transcription_cache = {}
 
-# Initialisation des modèles
-print("Chargement des modèles (Whisper TURBO + Answerer)...")
-# Passage au modèle TURBO : le meilleur compromis Vitesse / Précision
+print("Chargement des modèles (Whisper TURBO + Answerer LARGE)...")
 transcriber = Transcriber(model_size="large-v3-turbo") 
-answerer = Answerer(model_name="google/flan-t5-large")
+answerer = Answerer(model_name="Qwen/Qwen2.5-1.5B-Instruct")
 print("Modèles prêts !")
 
 @app.get("/", response_class=HTMLResponse)
@@ -28,89 +24,153 @@ def read_root():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Audio QA - Assistant Intelligent</title>
+        <title>Audio QA - Benchmarking</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
         <style>
-            body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
-            .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+            body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; }
+            .glass { background: rgba(255, 255, 255, 0.98); backdrop-filter: blur(10px); }
             .custom-scrollbar::-webkit-scrollbar { width: 6px; }
             .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-            .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         </style>
     </head>
-    <body class="min-h-screen flex items-center justify-center p-4">
-        <div class="max-w-2xl w-full space-y-8 glass p-8 rounded-3xl shadow-2xl border border-slate-200">
-            <div class="text-center">
-                <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight mb-2">Audio QA</h1>
-                <p class="text-slate-500 text-sm font-medium px-3 py-1 bg-slate-100 rounded-full inline-block mb-2">Mode: Whisper Turbo (Rapide & Précis)</p>
-                <p class="text-slate-500">Posez des questions sur vos fichiers audio (URL ou local)</p>
+    <body class="min-h-screen p-8 flex flex-col items-center">
+        <div class="max-w-4xl w-full space-y-8 glass p-10 rounded-3xl shadow-2xl border border-slate-200">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight">Audio QA Benchmark</h1>
+                    <p class="text-slate-500 mt-2">Analysez vos audios et testez la précision du modèle.</p>
+                </div>
+                <div class="text-right">
+                    <span class="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full uppercase">Whisper Turbo + T5-Large</span>
+                </div>
             </div>
 
-            <div class="space-y-6">
-                <!-- Option URL -->
-                <div>
-                    <div class="flex justify-between items-center mb-1">
-                        <label class="block text-sm font-semibold text-slate-700">URL du fichier MP3</label>
-                        <div class="flex gap-2">
-                            <span id="langBadge" class="hidden px-2 py-0.5 bg-blue-100 text-blue-600 text-xs font-bold rounded-full uppercase"></span>
-                            <span id="durationBadge" class="hidden px-2 py-0.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-full"></span>
-                        </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-700 mb-1">URL du fichier MP3</label>
+                        <input type="text" id="url" placeholder="https://..." 
+                            class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
                     </div>
-                    <input type="text" id="url" placeholder="https://exemple.com/audio.mp3" 
-                        class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
+                    <div class="relative flex py-2 items-center">
+                        <div class="flex-grow border-t border-slate-200"></div>
+                        <span class="flex-shrink mx-4 text-slate-400 text-xs font-bold uppercase">OU</span>
+                        <div class="flex-grow border-t border-slate-200"></div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-700 mb-1">Fichier local</label>
+                        <input type="file" id="audioFile" accept=".mp3,.wav,.m4a" 
+                            class="w-full text-sm p-2 border border-dashed border-slate-300 rounded-xl">
+                    </div>
                 </div>
 
-                <!-- Séparateur -->
-                <div class="relative flex py-2 items-center">
-                    <div class="flex-grow border-t border-slate-200"></div>
-                    <span class="flex-shrink mx-4 text-slate-400 text-xs font-bold uppercase">OU</span>
-                    <div class="flex-grow border-t border-slate-200"></div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-700 mb-1">Votre question</label>
+                        <textarea id="question" rows="4" placeholder="Posez une question..." 
+                            class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"></textarea>
+                    </div>
                 </div>
+            </div>
 
-                <!-- Option Fichier Local -->
-                <div>
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Importer un fichier audio</label>
-                    <input type="file" id="audioFile" accept=".mp3,.wav,.m4a" 
-                        class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-dashed border-slate-300 p-3 rounded-xl">
-                </div>
-
-                <div class="pt-2">
-                    <label class="block text-sm font-semibold text-slate-700 mb-1">Votre question</label>
-                    <input type="text" id="question" placeholder="De quoi parle cet audio ?" 
-                        class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
-                </div>
-
+            <div class="flex gap-4">
                 <button onclick="askQuestion()" id="submitBtn"
-                    class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transform transition active:scale-95 flex items-center justify-center">
-                    <span>Analyser et Répondre</span>
+                    class="flex-1 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-lg transform transition active:scale-95 flex items-center justify-center">
+                    Analyser & Répondre
+                </button>
+                <button onclick="runBenchmark()" id="testBtn"
+                    class="px-6 py-4 bg-slate-800 hover:bg-black text-white font-bold rounded-2xl shadow-lg transform transition active:scale-95 flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                    Lancer le Test (10 questions)
                 </button>
             </div>
 
-            <!-- Loader -->
-            <div id="loader" class="hidden flex flex-col items-center space-y-2">
+            <div id="loader" class="hidden flex flex-col items-center space-y-2 pt-4">
                 <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-                <p class="text-sm text-slate-500 italic">Analyse par Whisper Medium (Précision accrue)...</p>
+                <p id="loaderText" class="text-sm text-slate-500 italic">Analyse en cours...</p>
             </div>
 
-            <!-- Résultats -->
-            <div id="resultArea" class="hidden space-y-6 pt-6 border-t border-slate-100">
-                <div class="bg-blue-50 p-6 rounded-2xl border border-blue-100">
-                    <h2 class="text-blue-800 text-xs font-bold uppercase tracking-wider mb-2">Réponse</h2>
-                    <p id="answer" class="text-slate-900 text-lg leading-relaxed font-medium"></p>
+            <!-- Zone de résultats Benchmark -->
+            <div id="benchmarkResults" class="hidden space-y-4 pt-8 border-t border-slate-200">
+                <h3 class="text-xl font-bold text-slate-900">Résultats du Test Automatique</h3>
+                <div id="testGrid" class="grid grid-cols-1 gap-4">
+                    <!-- Les tests s'afficheront ici -->
                 </div>
-                <div>
-                    <h2 class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">Transcription</h2>
-                    <p id="transcription" class="text-slate-600 text-sm leading-relaxed max-h-48 overflow-y-auto pr-2 custom-scrollbar"></p>
+            </div>
+
+            <!-- Résultat unique -->
+            <div id="resultArea" class="hidden space-y-6 pt-8 border-t border-slate-200">
+                <div class="bg-blue-50 p-6 rounded-2xl border border-blue-100 shadow-sm">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-blue-800 text-xs font-bold uppercase tracking-wider">Réponse du modèle</h2>
+                        <span id="langBadge" class="px-2 py-0.5 bg-blue-100 text-blue-600 text-[10px] font-black rounded-full uppercase"></span>
+                    </div>
+                    <p id="answer" class="text-slate-900 text-xl leading-relaxed font-semibold"></p>
+                </div>
+                <div class="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                    <h2 class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">Transcription complète</h2>
+                    <p id="transcription" class="text-slate-600 text-sm leading-relaxed max-h-60 overflow-y-auto pr-2 custom-scrollbar italic"></p>
                 </div>
             </div>
         </div>
 
         <script>
-            function formatDuration(seconds) {
-                const mins = Math.floor(seconds / 60);
-                const secs = Math.round(seconds % 60);
-                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            const TEST_QUESTIONS = [
+                "Qui sont les deux personnages principaux ?",
+                "Dans quel magasin se trouvent-ils (parodie) ?",
+                "Quel est le prix total de la caution pour louer la camionnette ?",
+                "Cites les plats typiques du terroir suédois servis au restaurant.",
+                "Quel est le nom du canapé mentionné au début par Ludo ?",
+                "Pourquoi Ludo n'a-t-il pas pris le modèle Villasso ?",
+                "Que cherche précisément la cliente qui crie des 'Ch'taumeuls' ?",
+                "Quel est le prix de la location toutes les demi-heures ?",
+                "Qu'est-ce que les petits gitans ont volé au magasin ?",
+                "Quelle est la conclusion finale de Nico sur la mondialisation ?"
+            ];
+
+            async function runBenchmark() {
+                const url = document.getElementById('url').value;
+                const fileInput = document.getElementById('audioFile');
+                if (!url && fileInput.files.length === 0) { alert('Veuillez charger un audio d abord'); return; }
+
+                const testGrid = document.getElementById('testGrid');
+                const benchmarkResults = document.getElementById('benchmarkResults');
+                const resultArea = document.getElementById('resultArea');
+                const loader = document.getElementById('loader');
+                const loaderText = document.getElementById('loaderText');
+
+                testGrid.innerHTML = '';
+                benchmarkResults.classList.remove('hidden');
+                resultArea.classList.add('hidden');
+                loader.classList.remove('hidden');
+
+                for (let i = 0; i < TEST_QUESTIONS.length; i++) {
+                    const q = TEST_QUESTIONS[i];
+                    loaderText.innerText = `Question ${i+1}/${TEST_QUESTIONS.length} : ${q}`;
+                    
+                    const formData = new FormData();
+                    if (url) formData.append('url', url);
+                    else formData.append('file', fileInput.files[0]);
+                    formData.append('question', q);
+
+                    try {
+                        const res = await fetch('/ask-audio', { method: 'POST', body: formData });
+                        const data = await res.json();
+                        
+                        const card = document.createElement('div');
+                        card.className = "p-4 bg-white border border-slate-200 rounded-xl shadow-sm";
+                        card.innerHTML = `
+                            <p class="text-xs font-bold text-slate-400 uppercase mb-1">Q${i+1}: ${q}</p>
+                            <p class="text-slate-800 font-medium">${data.answer}</p>
+                        `;
+                        testGrid.appendChild(card);
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+                loader.classList.add('hidden');
             }
 
             async function askQuestion() {
@@ -120,61 +180,31 @@ def read_root():
                 const btn = document.getElementById('submitBtn');
                 const loader = document.getElementById('loader');
                 const resultArea = document.getElementById('resultArea');
-                const durationBadge = document.getElementById('durationBadge');
-                const langBadge = document.getElementById('langBadge');
+                const benchmarkResults = document.getElementById('benchmarkResults');
 
-                if (!url && fileInput.files.length === 0) { 
-                    alert('Veuillez entrer une URL ou sélectionner un fichier'); 
-                    return; 
-                }
+                if (!url && fileInput.files.length === 0) { alert('Audio manquant'); return; }
 
-                // UI State
                 btn.disabled = true;
-                btn.classList.add('opacity-50');
                 loader.classList.remove('hidden');
                 resultArea.classList.add('hidden');
-                durationBadge.classList.add('hidden');
-                langBadge.classList.add('hidden');
+                benchmarkResults.classList.add('hidden');
 
                 const formData = new FormData();
-                if (url) {
-                    formData.append('url', url);
-                } else {
-                    formData.append('file', fileInput.files[0]);
-                }
+                if (url) formData.append('url', url);
+                else formData.append('file', fileInput.files[0]);
                 formData.append('question', question || "De quoi parle cet audio ?");
 
                 try {
-                    const response = await fetch('/ask-audio', {
-                        method: 'POST',
-                        body: formData
-                    });
+                    const response = await fetch('/ask-audio', { method: 'POST', body: formData });
                     const data = await response.json();
-
                     if (response.ok) {
                         document.getElementById('answer').innerText = data.answer;
                         document.getElementById('transcription').innerText = data.transcription;
-                        
-                        if (data.audio_duration) {
-                            durationBadge.innerText = formatDuration(data.audio_duration);
-                            durationBadge.classList.remove('hidden');
-                        }
-                        if (data.language) {
-                            langBadge.innerText = data.language;
-                            langBadge.classList.remove('hidden');
-                        }
-                        
+                        document.getElementById('langBadge').innerText = data.language + " | " + Math.round(data.audio_duration) + "s";
                         resultArea.classList.remove('hidden');
-                    } else {
-                        alert('Erreur: ' + (data.detail || 'Une erreur est survenue'));
                     }
-                } catch (err) {
-                    alert('Erreur réseau ou serveur');
-                } finally {
-                    btn.disabled = false;
-                    btn.classList.remove('opacity-50');
-                    loader.classList.add('hidden');
-                }
+                } catch (err) { alert('Erreur'); } 
+                finally { btn.disabled = false; loader.classList.add('hidden'); }
             }
         </script>
     </body>
@@ -188,29 +218,21 @@ async def process_audio(
     question: str = Form("De quoi parle cet audio ?")
 ):
     if not file and not url:
-        raise HTTPException(status_code=400, detail="Vous devez fournir soit un fichier, soit une URL.")
+        raise HTTPException(status_code=400, detail="Audio manquant")
 
-    if url:
-        cache_key = url
-    else:
-        cache_key = f"local_{file.filename}_{file.size}"
-        
+    cache_key = url if url else f"local_{file.filename}_{file.size}"
     transcript = None
     duration = None
     language = None
 
-    # Vérification du cache
     if cache_key in transcription_cache:
-        print(f"Utilisation de la transcription en cache pour : {cache_key}")
         cached_data = transcription_cache[cache_key]
         transcript = cached_data["transcript"]
         duration = cached_data["duration"]
-        language = cached_data.get("language")
+        language = cached_data["language"]
 
     temp_path = None
-    
     try:
-        # Si pas en cache, on télécharge/lit et on transcrit
         if not transcript:
             if file:
                 temp_path = f"temp_{int(time.time())}_{file.filename}"
@@ -220,44 +242,22 @@ async def process_audio(
                 temp_path = f"temp_downloaded_{int(time.time())}.mp3"
                 async with httpx.AsyncClient() as client:
                     response = await client.get(url, follow_redirects=True)
-                    if response.status_code != 200:
-                        raise HTTPException(status_code=400, detail="Erreur téléchargement")
                     with open(temp_path, "wb") as f:
                         f.write(response.content)
             
-            # 1. Transcription (Whisper Medium)
-            print(f"Transcription multilingue (Medium)...")
             transcript, duration, language = transcriber.transcribe(temp_path)
-            
-            # Mise en cache
-            transcription_cache[cache_key] = {
-                "transcript": transcript,
-                "duration": duration,
-                "language": language
-            }
+            transcription_cache[cache_key] = {"transcript": transcript, "duration": duration, "language": language}
         
-        start_time = time.time()
-        
-        # 2. Answer
-        print(f"Réponse à la question ({language}) : {question}")
         answer = answerer.ask(transcript, question)
-        
-        processing_time = time.time() - start_time
-        
         return {
-            "filename": file.filename if file else url.split("/")[-1],
             "question": question,
             "transcription": transcript,
             "answer": answer,
             "audio_duration": duration,
-            "language": language,
-            "processing_time_sec": round(processing_time, 2)
+            "language": language
         }
-    
     except Exception as e:
-        print(f"Erreur : {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
