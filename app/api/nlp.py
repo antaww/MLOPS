@@ -26,8 +26,5 @@ def answer(request: Request, payload: QARequest) -> dict[str, str]:
 		model,
 		tokenizer,
 		context=payload.context,
-		max_chunk_chars=config.max_chunk_chars,
-		max_new_tokens=config.max_new_tokens,
 		question=payload.question,
-		temperature=config.temperature,
 	)
