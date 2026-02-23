@@ -39,4 +39,9 @@ $filePath = "c:\Users\antap\PycharmProjects\MLOPS\data\raw\test_2.wav"
 >>   -F "file=@$filePath" `
 >>   -F "question=$question"
 
+## activer gpu : 
+pip install torch --index-url https://download.pytorch.org/whl/cu121 --force-reinstall
 
+pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+
+python -c "import torch; print('GPU disponible :', torch.cuda.is_available()); print('Nom du GPU :', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Aucun')"

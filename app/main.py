@@ -10,12 +10,13 @@ import time
 app = FastAPI(title="Whisper QA API")
 
 # Cache simple pour éviter de re-transcrire le même audio
-# Format: { "url_ou_filename": {"transcript": "...", "duration": 123.4} }
+# Format: { "url_ou_filename": {"transcript": "...", "duration": 123.4, "language": "fr"} }
 transcription_cache = {}
 
 # Initialisation des modèles
-print("Chargement des modèles (Whisper + Answerer)...")
-transcriber = Transcriber(model_size="base") 
+print("Chargement des modèles (Whisper TURBO + Answerer)...")
+# Passage au modèle TURBO : le meilleur compromis Vitesse / Précision
+transcriber = Transcriber(model_size="large-v3-turbo") 
 answerer = Answerer(model_name="google/flan-t5-base")
 print("Modèles prêts !")
 
@@ -42,23 +43,44 @@ def read_root():
         <div class="max-w-2xl w-full space-y-8 glass p-8 rounded-3xl shadow-2xl border border-slate-200">
             <div class="text-center">
                 <h1 class="text-4xl font-extrabold text-slate-900 tracking-tight mb-2">Audio QA</h1>
-                <p class="text-slate-500">Posez des questions sur vos fichiers audio via URL</p>
+                <p class="text-slate-500 text-sm font-medium px-3 py-1 bg-slate-100 rounded-full inline-block mb-2">Mode: Whisper Turbo (Rapide & Précis)</p>
+                <p class="text-slate-500">Posez des questions sur vos fichiers audio (URL ou local)</p>
             </div>
 
-            <div class="space-y-4">
+            <div class="space-y-6">
+                <!-- Option URL -->
                 <div>
                     <div class="flex justify-between items-center mb-1">
                         <label class="block text-sm font-semibold text-slate-700">URL du fichier MP3</label>
-                        <span id="durationBadge" class="hidden px-2 py-0.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-full"></span>
+                        <div class="flex gap-2">
+                            <span id="langBadge" class="hidden px-2 py-0.5 bg-blue-100 text-blue-600 text-xs font-bold rounded-full uppercase"></span>
+                            <span id="durationBadge" class="hidden px-2 py-0.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-full"></span>
+                        </div>
                     </div>
                     <input type="text" id="url" placeholder="https://exemple.com/audio.mp3" 
                         class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
                 </div>
+
+                <!-- Séparateur -->
+                <div class="relative flex py-2 items-center">
+                    <div class="flex-grow border-t border-slate-200"></div>
+                    <span class="flex-shrink mx-4 text-slate-400 text-xs font-bold uppercase">OU</span>
+                    <div class="flex-grow border-t border-slate-200"></div>
+                </div>
+
+                <!-- Option Fichier Local -->
                 <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Importer un fichier audio</label>
+                    <input type="file" id="audioFile" accept=".mp3,.wav,.m4a" 
+                        class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-dashed border-slate-300 p-3 rounded-xl">
+                </div>
+
+                <div class="pt-2">
                     <label class="block text-sm font-semibold text-slate-700 mb-1">Votre question</label>
                     <input type="text" id="question" placeholder="De quoi parle cet audio ?" 
                         class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
                 </div>
+
                 <button onclick="askQuestion()" id="submitBtn"
                     class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transform transition active:scale-95 flex items-center justify-center">
                     <span>Analyser et Répondre</span>
@@ -68,7 +90,7 @@ def read_root():
             <!-- Loader -->
             <div id="loader" class="hidden flex flex-col items-center space-y-2">
                 <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-                <p class="text-sm text-slate-500 italic">Traitement de l'audio (cela peut prendre quelques secondes)...</p>
+                <p class="text-sm text-slate-500 italic">Analyse par Whisper Medium (Précision accrue)...</p>
             </div>
 
             <!-- Résultats -->
@@ -93,22 +115,33 @@ def read_root():
 
             async function askQuestion() {
                 const url = document.getElementById('url').value;
+                const fileInput = document.getElementById('audioFile');
                 const question = document.getElementById('question').value;
                 const btn = document.getElementById('submitBtn');
                 const loader = document.getElementById('loader');
                 const resultArea = document.getElementById('resultArea');
                 const durationBadge = document.getElementById('durationBadge');
+                const langBadge = document.getElementById('langBadge');
 
-                if (!url) { alert('Veuillez entrer une URL'); return; }
+                if (!url && fileInput.files.length === 0) { 
+                    alert('Veuillez entrer une URL ou sélectionner un fichier'); 
+                    return; 
+                }
 
                 // UI State
                 btn.disabled = true;
                 btn.classList.add('opacity-50');
                 loader.classList.remove('hidden');
                 resultArea.classList.add('hidden');
+                durationBadge.classList.add('hidden');
+                langBadge.classList.add('hidden');
 
                 const formData = new FormData();
-                formData.append('url', url);
+                if (url) {
+                    formData.append('url', url);
+                } else {
+                    formData.append('file', fileInput.files[0]);
+                }
                 formData.append('question', question || "De quoi parle cet audio ?");
 
                 try {
@@ -122,10 +155,13 @@ def read_root():
                         document.getElementById('answer').innerText = data.answer;
                         document.getElementById('transcription').innerText = data.transcription;
                         
-                        // Affichage de la durée
                         if (data.audio_duration) {
-                            durationBadge.innerText = "Durée: " + formatDuration(data.audio_duration);
+                            durationBadge.innerText = formatDuration(data.audio_duration);
                             durationBadge.classList.remove('hidden');
+                        }
+                        if (data.language) {
+                            langBadge.innerText = data.language;
+                            langBadge.classList.remove('hidden');
                         }
                         
                         resultArea.classList.remove('hidden');
@@ -154,10 +190,14 @@ async def process_audio(
     if not file and not url:
         raise HTTPException(status_code=400, detail="Vous devez fournir soit un fichier, soit une URL.")
 
-    # Identifiant unique pour le cache (URL ou nom de fichier)
-    cache_key = url if url else file.filename
+    if url:
+        cache_key = url
+    else:
+        cache_key = f"local_{file.filename}_{file.size}"
+        
     transcript = None
     duration = None
+    language = None
 
     # Vérification du cache
     if cache_key in transcription_cache:
@@ -165,6 +205,7 @@ async def process_audio(
         cached_data = transcription_cache[cache_key]
         transcript = cached_data["transcript"]
         duration = cached_data["duration"]
+        language = cached_data.get("language")
 
     temp_path = None
     
@@ -172,9 +213,7 @@ async def process_audio(
         # Si pas en cache, on télécharge/lit et on transcrit
         if not transcript:
             if file:
-                if not file.filename.endswith(('.mp3', '.wav', '.m4a')):
-                    raise HTTPException(status_code=400, detail="Format de fichier non supporté")
-                temp_path = f"temp_{file.filename}"
+                temp_path = f"temp_{int(time.time())}_{file.filename}"
                 with open(temp_path, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
             else:
@@ -182,34 +221,36 @@ async def process_audio(
                 async with httpx.AsyncClient() as client:
                     response = await client.get(url, follow_redirects=True)
                     if response.status_code != 200:
-                        raise HTTPException(status_code=400, detail=f"Impossible de télécharger l'audio (Status: {response.status_code})")
+                        raise HTTPException(status_code=400, detail="Erreur téléchargement")
                     with open(temp_path, "wb") as f:
                         f.write(response.content)
             
-            # 1. Transcription
-            print(f"Transcription en cours...")
-            transcript, duration = transcriber.transcribe(temp_path)
+            # 1. Transcription (Whisper Medium)
+            print(f"Transcription multilingue (Medium)...")
+            transcript, duration, language = transcriber.transcribe(temp_path)
             
             # Mise en cache
             transcription_cache[cache_key] = {
                 "transcript": transcript,
-                "duration": duration
+                "duration": duration,
+                "language": language
             }
         
         start_time = time.time()
         
         # 2. Answer
-        print(f"Réponse à la question : {question}")
+        print(f"Réponse à la question ({language}) : {question}")
         answer = answerer.ask(transcript, question)
         
         processing_time = time.time() - start_time
         
         return {
-            "filename": cache_key.split("/")[-1],
+            "filename": file.filename if file else url.split("/")[-1],
             "question": question,
             "transcription": transcript,
             "answer": answer,
             "audio_duration": duration,
+            "language": language,
             "processing_time_sec": round(processing_time, 2)
         }
     
