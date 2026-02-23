@@ -17,7 +17,7 @@ transcription_cache = {}
 print("Chargement des modèles (Whisper TURBO + Answerer)...")
 # Passage au modèle TURBO : le meilleur compromis Vitesse / Précision
 transcriber = Transcriber(model_size="large-v3-turbo") 
-answerer = Answerer(model_name="google/flan-t5-base")
+answerer = Answerer(model_name="google/flan-t5-large")
 print("Modèles prêts !")
 
 @app.get("/", response_class=HTMLResponse)

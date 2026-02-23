@@ -2,9 +2,14 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
 
 class Answerer:
-    def __init__(self, model_name="google/flan-t5-small", device="cpu"):
-        # Flan-T5 est excellent pour répondre à des questions sur un texte (RAG-like)
+    def __init__(self, model_name="google/flan-t5-large", device=None):
+        # Auto-détection du GPU
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
         self.device = device
+        print(f"--- Answerer configuré sur : {device.upper()} ---")
+        
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
 
@@ -12,27 +17,31 @@ class Answerer:
         if not context or not question:
             return "Pas assez de données pour répondre."
         
-        # Instruction plus précise pour forcer le raisonnement
+        # STRATÉGIE : Question + Instruction en PREMIER pour éviter la troncation
         input_text = (
-            f"Instruction: Based on the following context, answer the question as a helpful assistant. "
-            f"Think about who is speaking and who is being addressed.\n\n"
-            f"Context: {context}\n\n"
-            f"Question: {question}\n\n"
+            f"Answer the following question using the context below.\n"
+            f"Question: {question}\n"
+            f"Context: {context}\n"
             f"Answer:"
         )
         
-        # Tokenisation
+        # Tokenisation (on garde le début du prompt qui contient la question)
         inputs = self.tokenizer(input_text, return_tensors="pt", max_length=1024, truncation=True).to(self.device)
         
-        # Génération améliorée (num_beams=5 pour plus de qualité)
+        # Génération
         with torch.no_grad():
             outputs = self.model.generate(
                 inputs["input_ids"], 
                 max_length=150,
                 num_beams=5,
+                no_repeat_ngram_size=3,
                 early_stopping=True
             )
         
-        # Décodage
         answer = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Sécurité : si le modèle ne donne rien de probant
+        if not answer or len(answer.strip()) < 2:
+            return "Désolé, je n'ai pas trouvé la réponse dans cet audio."
+            
         return answer
