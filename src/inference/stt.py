@@ -11,18 +11,18 @@ from faster_whisper import WhisperModel
 class SttConfig:
 	beam_size: int = 5
 	compute_type: str = "int8"
-	device: str = "cpu"
+	device: str = "cuda"
 	language: str | None = None
-	model_name: str = "base"
+	model_name: str = "large-v3-turbo"
 	vad_filter: bool = True
 
 
 def config_from_env() -> SttConfig:
 	beam_size_raw = os.getenv("STT_BEAM_SIZE", "5")
 	compute_type = os.getenv("STT_COMPUTE_TYPE", "int8")
-	device = os.getenv("STT_DEVICE", "cpu")
+	device = os.getenv("STT_DEVICE", "cuda")
 	language = os.getenv("STT_LANGUAGE", "")
-	model_name = os.getenv("STT_MODEL_NAME", "base")
+	model_name = os.getenv("STT_MODEL_NAME", "large-v3-turbo")
 	vad_filter_raw = os.getenv("STT_VAD_FILTER", "true")
 
 	beam_size = int(beam_size_raw)
