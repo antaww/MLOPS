@@ -6,8 +6,19 @@ import os
 from src.inference.transcribe import Transcriber
 from src.inference.answerer import Answerer
 import time
+import json
+import redis
 
 app = FastAPI(title="Whisper QA API")
+
+# Connexion à Redis pour le cache (facultatif, repli sur dict si absent)
+try:
+    redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=0, decode_responses=True)
+    redis_client.ping()
+    print("Connecté à Redis pour le cache.")
+except Exception:
+    redis_client = None
+    print("Redis non disponible, utilisation du cache en mémoire (dict).")
 
 transcription_cache = {}
 
@@ -225,7 +236,14 @@ async def process_audio(
     duration = None
     language = None
 
-    if cache_key in transcription_cache:
+    if redis_client:
+        cached = redis_client.get(cache_key)
+        if cached:
+            cached_data = json.loads(cached)
+            transcript = cached_data["transcript"]
+            duration = cached_data["duration"]
+            language = cached_data["language"]
+    elif cache_key in transcription_cache:
         cached_data = transcription_cache[cache_key]
         transcript = cached_data["transcript"]
         duration = cached_data["duration"]
@@ -246,7 +264,11 @@ async def process_audio(
                         f.write(response.content)
             
             transcript, duration, language = transcriber.transcribe(temp_path)
-            transcription_cache[cache_key] = {"transcript": transcript, "duration": duration, "language": language}
+            data_to_cache = {"transcript": transcript, "duration": duration, "language": language}
+            if redis_client:
+                redis_client.set(cache_key, json.dumps(data_to_cache))
+            else:
+                transcription_cache[cache_key] = data_to_cache
         
         answer = answerer.ask(transcript, question)
         return {

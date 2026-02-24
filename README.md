@@ -4,7 +4,7 @@ Ce projet vise à mettre en production un système de transcription audio (via O
 
 ## Niveau 0 : Lancement local
 
-Le système tourne entièrement dans des conteneurs Docker.
+Le système tourne entièrement dans des conteneurs Docker (API FastAPI + Redis pour le cache).
 
 ### Prérequis
 - Docker Desktop installé sur Windows.

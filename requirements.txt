@@ -18,3 +18,4 @@ huggingface_hub
 # Utils
 python-dotenv
 httpx
+redis
