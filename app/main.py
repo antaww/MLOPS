@@ -14,29 +14,61 @@ app = FastAPI(title="Whisper QA API")
 
 # Configuration de la sécurité
 API_TOKENS = os.getenv("API_TOKENS", "dev-token-123,admin-token-456").split(",")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
 
 async def verify_token(x_token: Optional[str] = Header(None)):
-    if not x_token or x_token not in API_TOKENS:
-        raise HTTPException(status_code=401, detail="Token manquant ou invalide")
-    return x_token
+	if not x_token or x_token not in API_TOKENS:
+		raise HTTPException(status_code=401, detail="Token manquant ou invalide")
+	return x_token
 
 def track_usage(token: str):
-    if redis_client:
-        try:
-            redis_client.incr(f"user_usage:{token}")
-        except Exception as e:
-            print(f"Erreur lors du tracking Redis: {e}")
+	if redis_client:
+		try:
+			redis_client.incr(f"user_usage:{token}")
+		except Exception as e:
+			print(f"Erreur lors du tracking Redis: {e}")
+	else:
+		current_value = user_usage.get(token, 0)
+		user_usage[token] = current_value + 1
+
+def get_usage_data():
+	if redis_client:
+		try:
+			keys = redis_client.keys("user_usage:*")
+			items = []
+			for key in keys:
+				raw_value = redis_client.get(key)
+				try:
+					count = int(raw_value) if raw_value is not None else 0
+				except ValueError:
+					count = 0
+				token = key.split("user_usage:", 1)[1]
+				items.append({"token": token, "count": count})
+			items.sort(key=lambda item: item["count"], reverse=True)
+			return items
+		except Exception as e:
+			print(f"Erreur lors de la récupération des statistiques Redis: {e}")
+			return []
+	return [
+		{"token": token, "count": count}
+		for token, count in sorted(user_usage.items(), key=lambda pair: pair[1], reverse=True)
+	]
+
+def verify_admin(password: str):
+	if password != ADMIN_PASSWORD:
+		raise HTTPException(status_code=401, detail="Mot de passe administrateur invalide")
 
 # Connexion à Redis pour le cache (facultatif, repli sur dict si absent)
 try:
-    redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=0, decode_responses=True)
-    redis_client.ping()
-    print("Connecté à Redis pour le cache.")
+	redis_client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=0, decode_responses=True)
+	redis_client.ping()
+	print("Connecté à Redis pour le cache.")
 except Exception:
-    redis_client = None
-    print("Redis non disponible, utilisation du cache en mémoire (dict).")
+	redis_client = None
+	print("Redis non disponible, utilisation du cache en mémoire (dict).")
 
 transcription_cache = {}
+user_usage = {}
 
 print("Chargement des modèles (Whisper TURBO + Answerer LARGE)...")
 transcriber = Transcriber(model_size="large-v3-turbo") 
@@ -270,6 +302,146 @@ def read_root():
     </html>
     """
 
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page():
+	return """
+	<!DOCTYPE html>
+	<html lang="fr">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Admin - Suivi des tokens</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+		<style>
+			body { font-family: 'Inter', sans-serif; background-color: #020617; }
+			.glass { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(16px); }
+		</style>
+	</head>
+	<body class="min-h-screen flex items-center justify-center p-6">
+		<div class="max-w-4xl w-full glass rounded-3xl border border-slate-700 shadow-2xl p-8 space-y-6">
+			<div class="flex items-center justify-between">
+				<div>
+					<h1 class="text-2xl md:text-3xl font-extrabold text-slate-50 tracking-tight">Admin · Suivi des tokens</h1>
+					<p class="text-slate-400 text-sm mt-1">Visualisez l'utilisation des tokens traqués dans Redis.</p>
+				</div>
+				<span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/40">Protection par mot de passe</span>
+			</div>
+			<div class="grid grid-cols-1 md:grid-cols-[minmax(0,2fr),minmax(0,3fr)] gap-6 items-start">
+				<div class="space-y-4">
+					<label class="block text-xs font-semibold uppercase tracking-wide text-slate-400">Mot de passe administrateur</label>
+					<input id="adminPassword" type="password" placeholder="••••••••"
+						class="w-full px-3 py-2 rounded-xl bg-slate-900/70 border border-slate-700 text-slate-50 placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition">
+					<button id="loadBtn" onclick="loadUsage()"
+						class="w-full mt-2 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition">
+						<span>Charger les statistiques</span>
+					</button>
+					<p id="status" class="text-xs text-slate-400 mt-1"></p>
+				</div>
+				<div class="space-y-3">
+					<div class="flex items-center justify-between text-xs text-slate-400">
+						<span id="totalTokens">0 tokens suivis</span>
+						<span id="totalCalls">0 appels au total</span>
+					</div>
+					<div class="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/60">
+						<table class="min-w-full text-left text-xs text-slate-300">
+							<thead class="bg-slate-900/80 text-slate-400 uppercase tracking-wide text-[10px]">
+								<tr>
+									<th class="px-3 py-2">Token</th>
+									<th class="px-3 py-2 text-right">Appels</th>
+									<th class="px-3 py-2 w-32">Répartition</th>
+								</tr>
+							</thead>
+							<tbody id="usageTableBody" class="divide-y divide-slate-800/80">
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+		<script>
+			async function loadUsage() {
+				const passwordInput = document.getElementById('adminPassword');
+				const statusEl = document.getElementById('status');
+				const bodyEl = document.getElementById('usageTableBody');
+				const totalTokensEl = document.getElementById('totalTokens');
+				const totalCallsEl = document.getElementById('totalCalls');
+				const loadBtn = document.getElementById('loadBtn');
+
+				const password = passwordInput.value;
+				if (!password) {
+					statusEl.textContent = 'Veuillez entrer le mot de passe administrateur.';
+					statusEl.className = 'text-xs text-amber-400 mt-1';
+					return;
+				}
+
+				statusEl.textContent = 'Chargement des statistiques en cours...';
+				statusEl.className = 'text-xs text-sky-400 mt-1';
+				loadBtn.disabled = true;
+
+				try {
+					const response = await fetch(`/admin/usage?password=${encodeURIComponent(password)}`);
+					const data = await response.json();
+
+					if (!response.ok) {
+						throw new Error(data.detail || 'Accès refusé');
+					}
+
+					const items = data.items || [];
+					bodyEl.innerHTML = '';
+
+					let totalCalls = 0;
+					for (const item of items) {
+						const count = item.count || 0;
+						totalCalls += count;
+					}
+
+					for (const item of items) {
+						const token = item.token || 'inconnu';
+						const count = item.count || 0;
+						const percentage = totalCalls > 0 ? Math.round((count / totalCalls) * 100) : 0;
+
+						const tr = document.createElement('tr');
+						tr.innerHTML = `
+							<td class="px-3 py-2 align-middle">
+								<span class="font-mono text-[11px] text-slate-100">${token}</span>
+							</td>
+							<td class="px-3 py-2 text-right align-middle">
+								<span class="font-semibold">${count}</span>
+							</td>
+							<td class="px-3 py-2 align-middle">
+								<div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+									<div class="h-2 rounded-full bg-emerald-500" style="width: ${percentage}%;"></div>
+								</div>
+								<p class="text-[10px] text-slate-400 mt-1">${percentage}%</p>
+							</td>
+						`;
+						bodyEl.appendChild(tr);
+					}
+
+					totalTokensEl.textContent = `${items.length} token${items.length > 1 ? 's' : ''} suivis`;
+					totalCallsEl.textContent = `${totalCalls} appel${totalCalls > 1 ? 's' : ''} au total`;
+
+					if (items.length === 0) {
+						statusEl.textContent = 'Aucune utilisation de token détectée pour le moment.';
+						statusEl.className = 'text-xs text-slate-400 mt-1';
+					} else {
+						statusEl.textContent = 'Statistiques chargées avec succès.';
+						statusEl.className = 'text-xs text-emerald-400 mt-1';
+					}
+				} catch (error) {
+					statusEl.textContent = error.message || 'Erreur lors du chargement des statistiques.';
+					statusEl.className = 'text-xs text-rose-400 mt-1';
+				} finally {
+					loadBtn.disabled = false;
+				}
+			}
+		</script>
+	</body>
+	</html>
+	"""
+
 @app.post("/ask-audio")
 async def process_audio(
     file: UploadFile = File(None), 
@@ -344,3 +516,10 @@ async def process_audio(
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@app.get("/admin/usage")
+def admin_usage(password: str = Query(...)):
+	verify_admin(password)
+	items = get_usage_data()
+	return {"items": items}
