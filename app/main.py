@@ -278,6 +278,17 @@ async def process_audio(
     token: str = Depends(verify_token)
 ):
     track_usage(token)
+    
+    # Protection contre le Prompt Injection (Vérification immédiate)
+    if answerer._check_injection(question):
+        return {
+            "question": question,
+            "transcription": "[ACCÈS REFUSÉ - PROMPT INJECTION DÉTECTÉE]",
+            "answer": answerer.get_security_error_message(question),
+            "audio_duration": 0,
+            "language": "N/A"
+        }
+
     if not file and not url:
         raise HTTPException(status_code=400, detail="Audio manquant")
 
