@@ -1,6 +1,6 @@
 from fastapi.responses import HTMLResponse
 import httpx
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Header, Depends
 import shutil
 import os
 from src.inference.transcribe import Transcriber
@@ -8,8 +8,24 @@ from src.inference.answerer import Answerer
 import time
 import json
 import redis
+from typing import Optional
 
 app = FastAPI(title="Whisper QA API")
+
+# Configuration de la sécurité
+API_TOKENS = os.getenv("API_TOKENS", "dev-token-123,admin-token-456").split(",")
+
+async def verify_token(x_token: Optional[str] = Header(None)):
+    if not x_token or x_token not in API_TOKENS:
+        raise HTTPException(status_code=401, detail="Token manquant ou invalide")
+    return x_token
+
+def track_usage(token: str):
+    if redis_client:
+        try:
+            redis_client.incr(f"user_usage:{token}")
+        except Exception as e:
+            print(f"Erreur lors du tracking Redis: {e}")
 
 # Connexion à Redis pour le cache (facultatif, repli sur dict si absent)
 try:
@@ -60,6 +76,11 @@ def read_root():
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                 <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-700 mb-1">Token API (Header X-Token)</label>
+                        <input type="password" id="apiToken" placeholder="Votre token secret..." 
+                            class="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
+                    </div>
                     <div>
                         <label class="block text-sm font-semibold text-slate-700 mb-1">URL du fichier MP3</label>
                         <input type="text" id="url" placeholder="https://..." 
@@ -141,7 +162,17 @@ def read_root():
                 "Quelle est la conclusion finale de Nico sur la mondialisation ?"
             ];
 
+            // Charger le token depuis le localStorage au démarrage
+            document.addEventListener('DOMContentLoaded', () => {
+                const savedToken = localStorage.getItem('api_token');
+                if (savedToken) document.getElementById('apiToken').value = savedToken;
+            });
+
             async function runBenchmark() {
+                const token = document.getElementById('apiToken').value;
+                if (!token) { alert('Veuillez entrer un token API'); return; }
+                localStorage.setItem('api_token', token);
+
                 const url = document.getElementById('url').value;
                 const fileInput = document.getElementById('audioFile');
                 if (!url && fileInput.files.length === 0) { alert('Veuillez charger un audio d abord'); return; }
@@ -167,9 +198,15 @@ def read_root():
                     formData.append('question', q);
 
                     try {
-                        const res = await fetch('/ask-audio', { method: 'POST', body: formData });
+                        const res = await fetch('/ask-audio', { 
+                            method: 'POST', 
+                            body: formData,
+                            headers: { 'X-Token': token }
+                        });
                         const data = await res.json();
                         
+                        if (!res.ok) throw new Error(data.detail || 'Erreur API');
+
                         const card = document.createElement('div');
                         card.className = "p-4 bg-white border border-slate-200 rounded-xl shadow-sm";
                         card.innerHTML = `
@@ -178,13 +215,18 @@ def read_root():
                         `;
                         testGrid.appendChild(card);
                     } catch (e) {
-                        console.error(e);
+                        alert(`Erreur : ${e.message}`);
+                        break;
                     }
                 }
                 loader.classList.add('hidden');
             }
 
             async function askQuestion() {
+                const token = document.getElementById('apiToken').value;
+                if (!token) { alert('Veuillez entrer un token API'); return; }
+                localStorage.setItem('api_token', token);
+
                 const url = document.getElementById('url').value;
                 const fileInput = document.getElementById('audioFile');
                 const question = document.getElementById('question').value;
@@ -206,15 +248,21 @@ def read_root():
                 formData.append('question', question || "De quoi parle cet audio ?");
 
                 try {
-                    const response = await fetch('/ask-audio', { method: 'POST', body: formData });
+                    const response = await fetch('/ask-audio', { 
+                        method: 'POST', 
+                        body: formData,
+                        headers: { 'X-Token': token }
+                    });
                     const data = await response.json();
                     if (response.ok) {
                         document.getElementById('answer').innerText = data.answer;
                         document.getElementById('transcription').innerText = data.transcription;
                         document.getElementById('langBadge').innerText = data.language + " | " + Math.round(data.audio_duration) + "s";
                         resultArea.classList.remove('hidden');
+                    } else {
+                        alert(`Erreur : ${data.detail || 'Inconnue'}`);
                     }
-                } catch (err) { alert('Erreur'); } 
+                } catch (err) { alert('Erreur réseau ou serveur'); } 
                 finally { btn.disabled = false; loader.classList.add('hidden'); }
             }
         </script>
@@ -226,8 +274,10 @@ def read_root():
 async def process_audio(
     file: UploadFile = File(None), 
     url: str = Form(None),
-    question: str = Form("De quoi parle cet audio ?")
+    question: str = Form("De quoi parle cet audio ?"),
+    token: str = Depends(verify_token)
 ):
+    track_usage(token)
     if not file and not url:
         raise HTTPException(status_code=400, detail="Audio manquant")
 
