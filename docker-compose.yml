@@ -21,6 +21,18 @@ services:
       - redis
     restart: unless-stopped
 
+  locust:
+    build: .
+    container_name: whisper-qa-locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - .:/app
+    command: locust -f tests/load/locustfile.py --host http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
   redis:
     image: redis:alpine
     container_name: whisper-qa-cache
