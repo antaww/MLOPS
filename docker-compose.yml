@@ -38,5 +38,21 @@ services:
     container_name: whisper-qa-cache
     restart: unless-stopped
 
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: whisper-qa-tunnel
+    command: tunnel --no-autoupdate --url http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  locust-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: whisper-qa-locust-tunnel
+    command: tunnel --no-autoupdate --url http://locust:8089
+    depends_on:
+      - locust
+    restart: unless-stopped
+
 volumes:
   hf_cache:
