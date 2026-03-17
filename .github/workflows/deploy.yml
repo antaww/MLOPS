@@ -17,6 +17,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 30min
           script: |
             cd ~/MLOPS
             git pull origin main
